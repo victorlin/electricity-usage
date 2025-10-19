@@ -6,6 +6,7 @@ const FIFTEEN_MINUTES = 15 * 60 * 1000;
 const DATA_DIRECTORY = "../data/";
 const USAGE_FILE_PATTERN =
   /^scl_electric_usage_interval_data_\d+_\d+_\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}\.csv$/;
+const ROLLING_WINDOW = 10;
 
 const dateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: TIME_ZONE,
@@ -176,6 +177,49 @@ function listAvailableDates(records) {
     }
   }
   return dates;
+}
+
+function computeRollingAverage(records, windowSize) {
+  if (!records.length || windowSize <= 1) return [];
+  const averages = [];
+  let windowSum = 0;
+  for (let i = 0; i < records.length; i += 1) {
+    windowSum += records[i].importKWh;
+    if (i >= windowSize) {
+      windowSum -= records[i - windowSize].importKWh;
+    }
+    if (i >= windowSize - 1) {
+      averages.push({
+        timestamp: records[i].timestamp,
+        avg: windowSum / windowSize
+      });
+    }
+  }
+  return averages;
+}
+
+function rollingUnitLabel(granularity) {
+  switch (granularity) {
+    case "15min":
+      return "15-min intervals";
+    case "hourly":
+      return "hours";
+    case "daily":
+      return "days";
+    default:
+      return "intervals";
+  }
+}
+
+function describeRollingWindow(granularity, windowSize) {
+  if (granularity === "15min") {
+    const hours = (windowSize * 15) / 60;
+    const approxHours =
+      hours % 1 === 0 ? `${hours.toFixed(0)} h` : `${hours.toFixed(1)} h`;
+    return `${windowSize} × 15-min intervals (${approxHours})`;
+  }
+  const unit = rollingUnitLabel(granularity);
+  return `${windowSize} ${unit}`;
 }
 
 function fillMissingIntervals(records) {
@@ -385,21 +429,32 @@ function onSliderChange(event) {
   updateChart();
 }
 
-function buildTooltip(d, granularity) {
+function buildTooltip(d, granularity, avgMap, windowSize) {
   const dateLabel = formatDateInZone(d.timestamp);
   const timeLabel =
     granularity === "daily" ? "" : ` ${formatDisplayTime(d.timestamp)}`;
   const kwh = d.importKWh.toFixed(3);
-  return `${dateLabel}${timeLabel}\nImport: ${kwh} kWh`;
+  let avgLine = "";
+  if (avgMap && avgMap.has(d.timestamp.getTime())) {
+    const avgValue = avgMap.get(d.timestamp.getTime());
+    const unitLabel = rollingUnitLabel(granularity);
+    avgLine = `\nRolling avg (${windowSize} ${unitLabel}): ${avgValue.toFixed(
+      3
+    )} kWh`;
+  }
+  return `${dateLabel}${timeLabel}\nImport: ${kwh} kWh${avgLine}`;
 }
 
-function renderPlot(records, granularity) {
+function renderPlot(records, rolling, granularity, windowSize) {
   if (!records.length) {
     elements.plot.replaceChildren();
     return;
   }
 
   const width = Math.max(elements.plot.clientWidth, 640);
+  const avgMap = new Map(
+    rolling.map((entry) => [entry.timestamp.getTime(), entry.avg])
+  );
 
   const plot = Plot.plot({
     marginTop: 32,
@@ -427,23 +482,39 @@ function renderPlot(records, granularity) {
         y: "importKWh",
         fill: "#0070f3",
         fillOpacity: 0.15
-      }),
+      })
+    ]
+      .concat(
+        rolling.length
+          ? [
+              Plot.lineY(rolling, {
+                x: (d) => d.timestamp,
+                y: "avg",
+                stroke: "#f97316",
+                strokeWidth: 1.5,
+                strokeDasharray: "6,4",
+                strokeOpacity: 0.9
+              })
+            ]
+          : []
+      )
+      .concat([
       Plot.tip(
         records,
         Plot.pointerX({
           x: (d) => d.timestamp,
           y: "importKWh",
-          title: (d) => buildTooltip(d, granularity),
+          title: (d) => buildTooltip(d, granularity, avgMap, windowSize),
           anchor: "bottom"
         })
       )
-    ]
+    ])
   });
 
   elements.plot.replaceChildren(plot);
 }
 
-function updateStatus(filtered, granularity) {
+function updateStatus(filtered, granularity, rolling, windowSize) {
   if (!filtered.length) {
     elements.status.textContent =
       "No data in the selected range. Try expanding the dates.";
@@ -464,7 +535,16 @@ function updateStatus(filtered, granularity) {
     .toFixed(2);
   const unit = granularity === "15min" ? "points" : granularity;
 
-  elements.status.textContent = `Showing ${filtered.length} ${unit} from ${startLabel} through ${endLabel} · Total import ${totalKWh} kWh`;
+  const summaryParts = [
+    `Showing ${filtered.length} ${unit} from ${startLabel} through ${endLabel}`,
+    `Total import ${totalKWh} kWh`
+  ];
+  if (rolling?.length) {
+    summaryParts.push(
+      `Rolling avg window ${describeRollingWindow(granularity, windowSize)}`
+    );
+  }
+  elements.status.textContent = summaryParts.join(" · ");
 }
 
 function updateChart() {
@@ -474,8 +554,9 @@ function updateChart() {
     state.startDate,
     state.endDate
   );
-  renderPlot(filtered, state.granularity);
-  updateStatus(filtered, state.granularity);
+  const rolling = computeRollingAverage(filtered, ROLLING_WINDOW);
+  renderPlot(filtered, rolling, state.granularity, ROLLING_WINDOW);
+  updateStatus(filtered, state.granularity, rolling, ROLLING_WINDOW);
   updateSliderBackgrounds();
 }
 
