@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Electricity usage</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      --slider-fill: #0070f3;
+      --slider-track: rgba(0, 0, 0, 0.15);
+      --range-start: 0;
+      --range-end: 1;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f4f4f4;
+      color: #222;
+    }
+
+    main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.75rem;
+    }
+
+    p.lead {
+      margin: 8px 0 0;
+      font-size: 1rem;
+      color: #444;
+    }
+
+    section.controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: flex-end;
+      margin-bottom: 24px;
+      background: rgba(255, 255, 255, 0.8);
+      padding: 16px;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    section.controls label {
+      display: flex;
+      flex-direction: column;
+      font-size: 0.85rem;
+      color: #333;
+      min-width: 140px;
+    }
+
+    section.controls input,
+    section.controls select {
+      margin-top: 4px;
+      padding: 6px 8px;
+      font-size: 0.95rem;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+    }
+
+    section.controls fieldset {
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 6px;
+      padding: 12px;
+      margin: 0;
+      min-width: 0;
+      flex: 1 1 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    section.controls fieldset legend {
+      font-size: 0.85rem;
+      padding: 0 4px;
+      color: inherit;
+    }
+
+    .slider-inputs {
+      position: relative;
+      display: flex;
+      align-items: center;
+      height: 36px;
+      padding: 0 6px;
+    }
+
+    .slider-track {
+      position: absolute;
+      top: 50%;
+      left: 10px;
+      right: 10px;
+      height: 6px;
+      border-radius: 999px;
+      background: linear-gradient(
+        90deg,
+        var(--slider-track) 0%,
+        var(--slider-track) calc(var(--range-start) * 100%),
+        var(--slider-fill) calc(var(--range-start) * 100%),
+        var(--slider-fill) calc(var(--range-end) * 100%),
+        var(--slider-track) calc(var(--range-end) * 100%),
+        var(--slider-track) 100%
+      );
+      transform: translateY(-50%);
+      transition: background 120ms ease-out;
+    }
+
+    .slider-track.disabled {
+      background: var(--slider-track);
+    }
+
+    .slider-inputs input[type="range"] {
+      position: absolute;
+      left: 0;
+      right: 0;
+      margin: 0;
+      background: none;
+      appearance: none;
+      pointer-events: none;
+    }
+
+    .slider-inputs input[type="range"].range-start {
+      z-index: 2;
+    }
+
+    .slider-inputs input[type="range"].range-end {
+      z-index: 3;
+    }
+
+    .slider-inputs input[type="range"]::-webkit-slider-thumb {
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--slider-fill);
+      border: 2px solid #fff;
+      box-shadow: 0 0 2px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+      pointer-events: auto;
+      transition: transform 120ms ease-out;
+    }
+
+    .slider-inputs input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--slider-fill);
+      border: 2px solid #fff;
+      box-shadow: 0 0 2px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+      pointer-events: auto;
+      transition: transform 120ms ease-out;
+    }
+
+    .slider-inputs input[type="range"]::-webkit-slider-thumb:active,
+    .slider-inputs input[type="range"]::-moz-range-thumb:active {
+      transform: scale(1.1);
+    }
+
+    .slider-inputs input[type="range"]:focus-visible {
+      outline: none;
+    }
+
+    .slider-inputs input[type="range"]:focus-visible::-webkit-slider-thumb,
+    .slider-inputs input[type="range"]:focus-visible::-moz-range-thumb {
+      box-shadow: 0 0 0 4px rgba(0, 112, 243, 0.2);
+    }
+
+    .slider-inputs input[type="range"]::-webkit-slider-runnable-track,
+    .slider-inputs input[type="range"]::-moz-range-track {
+      background: transparent;
+    }
+
+    .slider-labels {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: #333;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .slider-labels span {
+      flex: 1;
+    }
+
+    .slider-labels span:first-child {
+      text-align: left;
+    }
+
+    .slider-labels span:nth-child(2) {
+      text-align: center;
+    }
+
+    .slider-labels span:last-child {
+      text-align: right;
+    }
+
+    section#chart {
+      background: rgba(255, 255, 255, 0.9);
+      padding: 16px;
+      border-radius: 8px;
+      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+    }
+
+    #plot {
+      width: 100%;
+      overflow: hidden;
+    }
+
+    #chart-status {
+      margin-top: 12px;
+      font-size: 0.9rem;
+      color: #333;
+    }
+
+    footer {
+      margin-top: 32px;
+      font-size: 0.8rem;
+      color: #555;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --slider-fill: #4ea1ff;
+        --slider-track: rgba(255, 255, 255, 0.25);
+      }
+
+      body {
+        background: #121212;
+        color: #e8e8e8;
+      }
+
+      p.lead,
+      section.controls label,
+      #chart-status,
+      footer {
+        color: #cfcfcf;
+      }
+
+      section.controls,
+      section#chart {
+        background: rgba(30, 30, 30, 0.85);
+        box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+      }
+
+      section.controls input,
+      section.controls select {
+        background: #1e1e1e;
+        color: inherit;
+        border-color: #555;
+      }
+
+      section.controls fieldset {
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+
+      .slider-inputs input[type="range"]::-webkit-slider-thumb,
+      .slider-inputs input[type="range"]::-moz-range-thumb {
+        border-color: #1e1e1e;
+        background: var(--slider-fill);
+        box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+      }
+
+      .slider-inputs input[type="range"]:focus-visible::-webkit-slider-thumb,
+      .slider-inputs input[type="range"]:focus-visible::-moz-range-thumb {
+        box-shadow: 0 0 0 4px rgba(78, 161, 255, 0.25);
+      }
+
+      .slider-labels {
+        color: #ddd;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Electricity usage</h1>
+      <p class="lead">
+        Unofficial electricity usage visualization tool for Seattle City Light customers.
+      </p>
+      <p class="lead">
+        To download data: visit the <a
+        href="https://myutilities.seattle.gov/eportal/#/avudashboard">usage
+        details dashboard</a>, click the "Green Button" (Download my data), and
+        export
+        <b>usage</b> (not bill totals) in CSV format. This downloads a .zip
+        file; unzip to .csv before loading.
+      </p>
+    </header>
+
+    <section class="controls" aria-label="Chart controls">
+      <label>
+        Data granularity
+        <select id="granularity">
+          <option value="15min">15-minute</option>
+          <option value="hourly">Hourly</option>
+          <option value="daily">Daily</option>
+        </select>
+      </label>
+      <label>
+        Start date
+        <input type="date" id="start-date">
+      </label>
+      <label>
+        End date
+        <input type="date" id="end-date">
+      </label>
+      <fieldset class="range-slider">
+        <legend>Date range slider</legend>
+        <div class="slider-inputs">
+          <div class="slider-track" id="range-track" aria-hidden="true"></div>
+          <input type="range" class="range-start" id="range-start" min="0" max="0" value="0" step="1" aria-label="Range start">
+          <input type="range" class="range-end" id="range-end" min="0" max="0" value="0" step="1" aria-label="Range end">
+        </div>
+        <div class="slider-labels">
+          <span id="range-start-label">Start</span>
+          <span id="range-length-label"></span>
+          <span id="range-end-label">End</span>
+        </div>
+      </fieldset>
+    </section>
+
+    <section id="chart" aria-live="polite">
+      <div id="plot" role="img" aria-label="Electricity usage chart"></div>
+      <div id="chart-status">Loading usage data…</div>
+    </section>
+
+    <footer>
+      Data sourced from Seattle City Light usage CSV exports. For best results, serve this directory locally (e.g. <code>npx serve</code>).
+    </footer>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
