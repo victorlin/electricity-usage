@@ -167,6 +167,25 @@ function formatDisplayDate(dateStr) {
   return displayDateFormatter.format(date);
 }
 
+function toDisplayTimestamp(date, timeZone = TIME_ZONE) {
+  const dtf = getDateTimeFormat(timeZone);
+  const parts = dtf.formatToParts(date);
+  const values = {};
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      values[part.type] = Number(part.value);
+    }
+  }
+  return new Date(Date.UTC(
+    values.year,
+    values.month - 1,
+    values.day,
+    values.hour,
+    values.minute,
+    values.second
+  ));
+}
+
 function listAvailableDates(records) {
   const dates = [];
   let previous = null;
@@ -472,13 +491,13 @@ function renderPlot(records, rolling, granularity, windowSize) {
     marks: [
       Plot.ruleY([0]),
       Plot.lineY(records, {
-        x: (d) => d.timestamp,
+        x: (d) => toDisplayTimestamp(d.timestamp),
         y: "importKWh",
         stroke: "#0070f3",
         strokeWidth: 1.5
       }),
       Plot.areaY(records, {
-        x: (d) => d.timestamp,
+        x: (d) => toDisplayTimestamp(d.timestamp),
         y: "importKWh",
         fill: "#0070f3",
         fillOpacity: 0.15
@@ -488,7 +507,7 @@ function renderPlot(records, rolling, granularity, windowSize) {
         rolling.length
           ? [
               Plot.lineY(rolling, {
-                x: (d) => d.timestamp,
+                x: (d) => toDisplayTimestamp(d.timestamp),
                 y: "avg",
                 stroke: "#f97316",
                 strokeWidth: 1.5,
@@ -502,7 +521,7 @@ function renderPlot(records, rolling, granularity, windowSize) {
       Plot.tip(
         records,
         Plot.pointerX({
-          x: (d) => d.timestamp,
+          x: (d) => toDisplayTimestamp(d.timestamp),
           y: "importKWh",
           title: (d) => buildTooltip(d, granularity, avgMap, windowSize),
           anchor: "bottom"
