@@ -3,9 +3,6 @@ import * as Plot from "https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6/+esm"
 
 const TIME_ZONE = "America/Los_Angeles";
 const FIFTEEN_MINUTES = 15 * 60 * 1000;
-const DATA_DIRECTORY = "../data/";
-const USAGE_FILE_PATTERN =
-  /^scl_electric_usage_interval_data_\d+_\d+_\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}\.csv$/;
 const ROLLING_WINDOW = 10;
 
 const dateFormatter = new Intl.DateTimeFormat("en-CA", {
@@ -55,6 +52,8 @@ const state = {
 };
 
 const elements = {
+  fileInput: document.getElementById("file-input"),
+  clearButton: document.getElementById("clear-data"),
   granularity: document.getElementById("granularity"),
   start: document.getElementById("start-date"),
   end: document.getElementById("end-date"),
@@ -623,108 +622,41 @@ function onRangeChange() {
   updateChart();
 }
 
-async function discoverUsageFiles() {
-  const response = await fetch(DATA_DIRECTORY);
-  if (!response.ok) {
-    throw new Error(
-      `Failed to list usage data files (${response.status} ${response.statusText})`
-    );
+async function loadUsageData(files) {
+  if (!files || !files.length) {
+    throw new Error("No files provided.");
   }
 
-  const contentType = response.headers.get("content-type") ?? "";
-  const body = await response.text();
-  const candidates = new Set();
-
-  const addCandidate = (candidate) => {
-    if (!candidate) return;
-    const stripped = candidate.replace(/^\.\//, "");
-    const withoutQuery = stripped.split("#")[0]?.split("?")[0] ?? "";
-    const filename =
-      withoutQuery
-        .split("/")
-        .filter((segment) => segment && segment !== "..")
-        .pop() ?? "";
-    if (filename && USAGE_FILE_PATTERN.test(filename)) {
-      candidates.add(filename);
-    }
+  const readFile = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const text = event.target.result;
+          const normalized = normalizeCsv(text);
+          const records = parseUsageRows(normalized, file.name);
+          resolve(records);
+        } catch (error) {
+          reject(new Error(`Failed to parse ${file.name}: ${error.message}`));
+        }
+      };
+      reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+      reader.readAsText(file);
+    });
   };
 
-  if (contentType.includes("application/json")) {
-    try {
-      const manifest = JSON.parse(body);
-      const entries = Array.isArray(manifest)
-        ? manifest
-        : Array.isArray(manifest.files)
-        ? manifest.files
-        : [];
-      for (const entry of entries) {
-        if (typeof entry === "string") {
-          addCandidate(entry);
-          continue;
-        }
-        if (entry && typeof entry === "object") {
-          addCandidate(
-            entry.name ||
-              entry.path ||
-              entry.href ||
-              entry.url ||
-              entry.filename ||
-              ""
-          );
-        }
-      }
-    } catch (error) {
-      console.warn("Failed to parse data directory listing as JSON", error);
-    }
-  }
-
-  if (contentType.includes("text/html")) {
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(body, "text/html");
-      doc.querySelectorAll("a[href]").forEach((link) => {
-        addCandidate(link.getAttribute("href"));
-      });
-    } catch (error) {
-      console.warn("Failed to parse data directory listing as HTML", error);
-    }
-  }
-
-  if (!candidates.size) {
-    for (const match of body.matchAll(USAGE_FILE_PATTERN)) {
-      addCandidate(match[0]);
-    }
-  }
-
-  if (!candidates.size) {
-    throw new Error("No usage CSV files found in data directory.");
-  }
-
-  return Array.from(candidates)
-    .sort((a, b) => a.localeCompare(b))
-    .map((filename) => `${DATA_DIRECTORY}${filename}`);
-}
-
-async function loadUsageData() {
-  const usageFiles = await discoverUsageFiles();
-  if (!usageFiles.length) {
-    throw new Error("No usage CSV files available.");
-  }
-
-  const responses = await Promise.all(
-    usageFiles.map(async (url) => {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Failed to load ${url} (${response.status})`);
-      }
-      const text = await response.text();
-      const normalized = normalizeCsv(text);
-      return parseUsageRows(normalized, url);
-    })
+  const newRecordsArrays = await Promise.all(
+    Array.from(files).map((file) => readFile(file))
   );
 
-  const recordsByTimestamp = new Map(); // later files override duplicate intervals
-  for (const records of responses) {
+  const existingRecords = await loadAllRecords();
+  const recordsByTimestamp = new Map();
+
+  for (const record of existingRecords) {
+    recordsByTimestamp.set(record.timestamp.getTime(), record);
+  }
+
+  for (const records of newRecordsArrays) {
     for (const record of records) {
       recordsByTimestamp.set(record.timestamp.getTime(), record);
     }
@@ -733,6 +665,9 @@ async function loadUsageData() {
   const merged = Array.from(recordsByTimestamp.values()).sort(
     (a, b) => a.timestamp - b.timestamp
   );
+
+  await saveRecords(merged);
+
   const filled = fillMissingIntervals(merged);
 
   state.byGranularity["15min"] = filled;
@@ -752,9 +687,224 @@ async function loadUsageData() {
   }
 }
 
+const DB_NAME = "scl-usage-data";
+const DB_VERSION = 1;
+const STORE_NAME = "intervals";
+
+async function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "timestampKey" });
+      }
+    };
+  });
+}
+
+async function saveRecords(records) {
+  const db = await openDatabase();
+  const transaction = db.transaction([STORE_NAME], "readwrite");
+  const store = transaction.objectStore(STORE_NAME);
+
+  for (const record of records) {
+    const timestampKey = record.timestamp.getTime();
+    store.put({ ...record, timestampKey });
+  }
+
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error);
+    };
+  });
+}
+
+async function loadAllRecords() {
+  const db = await openDatabase();
+  const transaction = db.transaction([STORE_NAME], "readonly");
+  const store = transaction.objectStore(STORE_NAME);
+
+  return new Promise((resolve, reject) => {
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+      db.close();
+      const records = request.result.map((record) => ({
+        timestamp: new Date(record.timestampKey),
+        date: record.date,
+        startTime: record.startTime,
+        importKWh: record.importKWh,
+        source: record.source,
+        synthetic: record.synthetic
+      }));
+      records.sort((a, b) => a.timestamp - b.timestamp);
+      resolve(records);
+    };
+
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+  });
+}
+
+async function clearAllRecords() {
+  const db = await openDatabase();
+  const transaction = db.transaction([STORE_NAME], "readwrite");
+  const store = transaction.objectStore(STORE_NAME);
+
+  return new Promise((resolve, reject) => {
+    const request = store.clear();
+
+    request.onsuccess = () => {
+      db.close();
+      resolve();
+    };
+
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+  });
+}
+
+async function onFilesSelected(event) {
+  const files = event.target.files;
+  if (!files || !files.length) return;
+
+  elements.status.textContent = `Loading ${files.length} file(s)...`;
+
+  try {
+    await loadUsageData(files);
+    clampDateInputs();
+    initializeRangeSlider();
+    updateChart();
+  } catch (error) {
+    console.error(error);
+    elements.status.textContent = `Failed to load files: ${error.message}`;
+  }
+
+  event.target.value = "";
+}
+
+async function onClearData() {
+  if (!confirm("Clear all stored data? This cannot be undone.")) {
+    return;
+  }
+
+  try {
+    await clearAllRecords();
+
+    state.byGranularity["15min"] = [];
+    state.byGranularity.hourly = [];
+    state.byGranularity.daily = [];
+    state.availableDates = [];
+    state.startDate = null;
+    state.endDate = null;
+    state.rangeIndices.start = 0;
+    state.rangeIndices.end = 0;
+
+    elements.plot.replaceChildren();
+    elements.status.textContent = "Data cleared. Load CSV files to begin.";
+    elements.start.value = "";
+    elements.end.value = "";
+    initializeRangeSlider();
+  } catch (error) {
+    console.error(error);
+    elements.status.textContent = `Failed to clear data: ${error.message}`;
+  }
+}
+
+function setupDragAndDrop() {
+  const dragOverlay = document.getElementById("drag-overlay");
+  let dragCounter = 0;
+
+  const handleDragEnter = (event) => {
+    event.preventDefault();
+    dragCounter++;
+    if (dragCounter === 1) {
+      dragOverlay.classList.add("active");
+    }
+  };
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+  };
+
+  const handleDragLeave = (event) => {
+    event.preventDefault();
+    dragCounter--;
+    if (dragCounter === 0) {
+      dragOverlay.classList.remove("active");
+    }
+  };
+
+  const handleDrop = async (event) => {
+    event.preventDefault();
+    dragCounter = 0;
+    dragOverlay.classList.remove("active");
+
+    const files = event.dataTransfer?.files;
+    if (!files || !files.length) return;
+
+    const csvFiles = Array.from(files).filter((file) =>
+      file.name.toLowerCase().endsWith(".csv")
+    );
+
+    if (csvFiles.length === 0) {
+      elements.status.textContent = "No CSV files found in dropped items.";
+      return;
+    }
+
+    elements.status.textContent = `Loading ${csvFiles.length} file(s)...`;
+
+    try {
+      await loadUsageData(csvFiles);
+      clampDateInputs();
+      initializeRangeSlider();
+      updateChart();
+    } catch (error) {
+      console.error(error);
+      elements.status.textContent = `Failed to load files: ${error.message}`;
+    }
+  };
+
+  document.body.addEventListener("dragenter", handleDragEnter);
+  document.body.addEventListener("dragover", handleDragOver);
+  document.body.addEventListener("dragleave", handleDragLeave);
+  document.body.addEventListener("drop", handleDrop);
+}
+
 async function init() {
   try {
-    await loadUsageData();
+    const existingRecords = await loadAllRecords();
+
+    if (existingRecords.length > 0) {
+      const filled = fillMissingIntervals(existingRecords);
+      state.byGranularity["15min"] = filled;
+      state.byGranularity.hourly = aggregate(filled, "hourly");
+      state.byGranularity.daily = aggregate(filled, "daily");
+      state.availableDates = listAvailableDates(filled);
+      if (state.availableDates.length) {
+        state.rangeIndices.start = 0;
+        state.rangeIndices.end = state.availableDates.length - 1;
+        state.startDate = state.availableDates[0];
+        state.endDate = state.availableDates.at(-1);
+      }
+    } else {
+      elements.status.textContent = "No data loaded. Use 'Load CSV files' to get started.";
+    }
+
     clampDateInputs();
     initializeRangeSlider();
     elements.granularity.value = state.granularity;
@@ -763,6 +913,11 @@ async function init() {
     elements.end.addEventListener("change", onRangeChange);
     elements.rangeStart?.addEventListener("input", onSliderChange);
     elements.rangeEnd?.addEventListener("input", onSliderChange);
+    elements.fileInput?.addEventListener("change", onFilesSelected);
+    elements.clearButton?.addEventListener("click", onClearData);
+
+    setupDragAndDrop();
+
     const darkModeQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
     const themeListener = () => updateSliderBackgrounds();
     if (darkModeQuery) {
@@ -772,10 +927,13 @@ async function init() {
         darkModeQuery.addListener(themeListener);
       }
     }
-    updateChart();
+
+    if (existingRecords.length > 0) {
+      updateChart();
+    }
   } catch (error) {
     console.error(error);
-    elements.status.textContent = `Failed to load usage data: ${error.message}`;
+    elements.status.textContent = `Failed to initialize: ${error.message}`;
   }
 }
 

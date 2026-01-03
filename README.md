@@ -20,10 +20,11 @@ A tool to visualize usage data from Seattle City Light.
 
 ## Technical specifications
 
-- Bundle a minimal static page that loads usage CSVs via `fetch`, parses them with `d3-dsv`, and caches per-granularity datasets (15 min/hour/day).
-- Plot the data under the import column. Fill in missing data (e.g. DST jumps with 0 kWh).
+- Bundle a minimal static page that loads usage CSVs via drag/drop or file picker, parses them with `d3-dsv`, and stores deduplicated interval data in IndexedDB for persistence across sessions.
+- Compute per-granularity datasets (15 min/hour/day) on demand from stored data.
+- Plot the data under the import column. Fill in missing data (e.g. DST jumps) with 0 kWh.
 - Import Observable Plot and `d3-dsv` directly from CDN ESM URLs inside a `<script type="module">`.
-- Use a simple control panel (selects/buttons) wired to re-render `Plot.plot` with the chosen aggregate.
+- Use a simple control panel (file picker, clear button, selects) wired to re-render `Plot.plot` with the chosen aggregate.
 - Since [zoom is not available](https://github.com/observablehq/plot/issues/1590), add a date range slider to control the date bounds.
 - Keep state in plain JavaScript modules; no build step required beyond serving the static files.
 

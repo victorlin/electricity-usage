@@ -72,6 +72,25 @@
       border-radius: 4px;
     }
 
+    section.controls button {
+      padding: 6px 12px;
+      font-size: 0.95rem;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+      background: #fff;
+      color: #333;
+      cursor: pointer;
+      transition: background 120ms ease-out;
+    }
+
+    section.controls button:hover {
+      background: #f0f0f0;
+    }
+
+    section.controls button:active {
+      background: #e0e0e0;
+    }
+
     section.controls fieldset {
       border: 1px solid rgba(0, 0, 0, 0.1);
       border-radius: 6px;
@@ -233,6 +252,35 @@
       color: #555;
     }
 
+    #drag-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 112, 243, 0.1);
+      border: 4px dashed #0070f3;
+      z-index: 9999;
+      pointer-events: none;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #drag-overlay.active {
+      display: flex;
+    }
+
+    #drag-overlay-message {
+      background: rgba(255, 255, 255, 0.95);
+      padding: 32px 48px;
+      border-radius: 12px;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #0070f3;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
     @media (prefers-color-scheme: dark) {
       :root {
         --slider-fill: #4ea1ff;
@@ -264,6 +312,20 @@
         border-color: #555;
       }
 
+      section.controls button {
+        background: #1e1e1e;
+        color: inherit;
+        border-color: #555;
+      }
+
+      section.controls button:hover {
+        background: #2a2a2a;
+      }
+
+      section.controls button:active {
+        background: #333;
+      }
+
       section.controls fieldset {
         border-color: rgba(255, 255, 255, 0.2);
       }
@@ -283,10 +345,24 @@
       .slider-labels {
         color: #ddd;
       }
+
+      #drag-overlay {
+        background: rgba(78, 161, 255, 0.15);
+        border-color: #4ea1ff;
+      }
+
+      #drag-overlay-message {
+        background: rgba(30, 30, 30, 0.95);
+        color: #4ea1ff;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+      }
     }
   </style>
 </head>
 <body>
+  <div id="drag-overlay">
+    <div id="drag-overlay-message">Drop CSV files here</div>
+  </div>
   <main>
     <header>
       <h1>Electricity usage</h1>
@@ -304,6 +380,11 @@
     </header>
 
     <section class="controls" aria-label="Chart controls">
+      <label>
+        Choose or drag data files onto this page
+        <input type="file" id="file-input" accept=".csv" multiple>
+      </label>
+      <button id="clear-data">Clear data</button>
       <label>
         Data granularity
         <select id="granularity">
@@ -341,7 +422,7 @@
     </section>
 
     <footer>
-      Data sourced from Seattle City Light usage CSV exports. For best results, serve this directory locally (e.g. <code>npx serve</code>).
+      (TBD) link to source code
     </footer>
   </main>
 
